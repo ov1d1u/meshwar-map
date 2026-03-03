@@ -47,6 +47,23 @@ function encodeGeohash(lat, lon, precision = 7) {
 
 export async function onRequestGet(context) {
   try {
+    // Check for version-based ETag
+    const version = await context.env.WARDRIVE_DATA.get('coverage_version') || '0';
+    const etag = `"v${version}"`;
+
+    // If client has current version, return 304
+    const ifNoneMatch = context.request.headers.get('If-None-Match');
+    if (ifNoneMatch === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          'ETag': etag,
+          'Cache-Control': 'public, max-age=10',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+
     // Get aggregated coverage from KV storage
     const coverageJson = await context.env.WARDRIVE_DATA.get('coverage');
     
@@ -55,6 +72,8 @@ export async function onRequestGet(context) {
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
+          'ETag': etag,
+          'Cache-Control': 'public, max-age=10',
         },
       });
     }
@@ -65,6 +84,8 @@ export async function onRequestGet(context) {
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
+        'ETag': etag,
+        'Cache-Control': 'public, max-age=10',
       },
     });
   } catch (error) {
@@ -250,8 +271,10 @@ export async function onRequestPost(context) {
       }
     });
     
-    // Store updated coverage
+    // Store updated coverage and increment version for ETag
+    const currentVersion = parseInt(await context.env.WARDRIVE_DATA.get('coverage_version') || '0');
     await context.env.WARDRIVE_DATA.put('coverage', JSON.stringify(existingCoverage));
+    await context.env.WARDRIVE_DATA.put('coverage_version', String(currentVersion + 1));
 
     // Mark processed samples as seen with TTL (90 days)
     // Wrap in try-catch to prevent 500 error if marking fails
